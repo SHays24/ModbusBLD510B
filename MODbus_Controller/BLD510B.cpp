@@ -1,6 +1,8 @@
 #include "BLD510B.h"
 #include "ModBusBuilder.h"
 
+// Define the RE/DE pin used for RS485 direction control
+static const uint8_t RS485_RTS_PIN = 5;
 
 BLD510B::BLD510B(
     uint8_t server,
@@ -11,13 +13,13 @@ BLD510B::BLD510B(
     this->motorDirection = motorDir;
 }
 
-
 bool BLD510B::setSpeed(
     uint16_t RPM
 )
 {
     uint8_t frame[8];
 
+    // Speed register expects Low Byte first according to BLD-510B manual
     uint8_t data1 = RPM & 0xFF;
     uint8_t data2 = (RPM >> 8) & 0xFF;
 
@@ -29,11 +31,32 @@ bool BLD510B::setSpeed(
         frame
     );
 
+    while (Serial1.available())
+    {
+        Serial1.read();
+    }
+
+    digitalWrite(RS485_RTS_PIN, HIGH);
     Serial1.write(frame, len);
+    Serial1.flush();
+    digitalWrite(RS485_RTS_PIN, LOW);
+
+    unsigned long startTime = millis();
+    while (Serial1.available() < 8)
+    {
+        if (millis() - startTime > 50) 
+        { 
+            break; 
+        }
+    }
+
+    while (Serial1.available())
+    {
+        Serial1.read();
+    }
 
     return true;
 }
-
 
 bool BLD510B::setControl(
     uint8_t control,
@@ -50,11 +73,32 @@ bool BLD510B::setControl(
         frame
     );
 
+    while (Serial1.available())
+    {
+        Serial1.read();
+    }
+
+    digitalWrite(RS485_RTS_PIN, HIGH);
     Serial1.write(frame, len);
+    Serial1.flush();
+    digitalWrite(RS485_RTS_PIN, LOW);
+
+    unsigned long startTime = millis();
+    while (Serial1.available() < 8)
+    {
+        if (millis() - startTime > 50) 
+        { 
+            break; 
+        }
+    }
+
+    while (Serial1.available())
+    {
+        Serial1.read();
+    }
 
     return true;
 }
-
 
 uint16_t BLD510B::getSpeed()
 {
@@ -67,28 +111,17 @@ uint16_t BLD510B::getSpeed()
         frame
     );
 
-    // Clear old received data
     while (Serial1.available())
     {
         Serial1.read();
     }
 
-    // Send request
+    digitalWrite(RS485_RTS_PIN, HIGH);
     Serial1.write(frame, len);
     Serial1.flush();
-
-    // Expected Modbus response:
-    //
-    // Address
-    // Function
-    // Byte count
-    // Data high
-    // Data low
-    // CRC low
-    // CRC high
+    digitalWrite(RS485_RTS_PIN, LOW);
 
     uint8_t response[7];
-
     unsigned long startTime = millis();
 
     while (Serial1.available() < 7)
@@ -104,33 +137,15 @@ uint16_t BLD510B::getSpeed()
         7
     );
 
-    if (received != 7)
+    if (received != 7 || 
+        response[0] != this->addr || 
+        response[1] != 0x03 || 
+        response[2] != 2)
     {
         return 0;
     }
 
-    // Check address
-    if (response[0] != this->addr)
-    {
-        return 0;
-    }
-
-    // Check function
-    if (response[1] != 0x03)
-    {
-        return 0;
-    }
-
-    // Check byte count
-    if (response[2] != 2)
-    {
-        return 0;
-    }
-
-    // Convert two bytes to 16-bit register
-    uint16_t speed =
-        ((uint16_t)response[3] << 8) |
-        response[4];
+    uint16_t speed = ((uint16_t)response[3] << 8) | response[4];
 
     return speed;
 }
